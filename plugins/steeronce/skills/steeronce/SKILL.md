@@ -1,22 +1,22 @@
 ---
-name: correction-kit
-description: Record explicit user corrections during AI-assisted work into a local, metadata-only CorrectionKit database. Use when the user says the agent misunderstood intent, guessed without evidence, ignored supplied context, exceeded authorization, skipped verification, or produced a broken implementation.
+name: steeronce
+description: Turn explicit user corrections during AI-assisted work into local, user-approved SteerOnce rules without storing prompt text. Use when the user says the agent misunderstood intent, guessed without evidence, ignored supplied context, exceeded authorization, skipped verification, or produced a broken implementation.
 ---
 
-# CorrectionKit
+# SteerOnce
 
 The installed `UserPromptSubmit` hook records a local candidate when the user explicitly corrects the agent. Do not record it again from the skill. Respond to the correction first; never interrupt the user's work to promote a rule.
 
 To inspect already approved personal rules, run the bundled script from this skill's resolved installation directory:
 
 ```bash
-python3 <this-skill-directory>/scripts/correction_kit.py rules
+python3 <this-skill-directory>/scripts/steeronce.py rules
 ```
 
 If the hook is unavailable and the user explicitly asks to save a confirmed correction, run:
 
 ```bash
-python3 <this-skill-directory>/scripts/correction_kit.py record --category <category>
+python3 <this-skill-directory>/scripts/steeronce.py record --category <category>
 ```
 
 Choose exactly one category:

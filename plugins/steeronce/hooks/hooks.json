@@ -1,5 +1,5 @@
 {
-  "description": "Local CorrectionKit capture and approved-rule loading.",
+  "description": "Local SteerOnce correction capture and approved-rule loading.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$PLUGIN_ROOT/skills/correction-kit/scripts/correction_kit.py\" hook",
+            "command": "python3 \"$PLUGIN_ROOT/skills/steeronce/scripts/steeronce.py\" hook",
             "timeout": 3,
             "additionalContextLimit": 1000
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$PLUGIN_ROOT/skills/correction-kit/scripts/correction_kit.py\" hook",
+            "command": "python3 \"$PLUGIN_ROOT/skills/steeronce/scripts/steeronce.py\" hook",
             "timeout": 3
           }
         ]

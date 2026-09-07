@@ -1,10 +1,10 @@
-# CorrectionKit
+# SteerOnce
 
 [English](README.md) | 简体中文
 
-**你到底多久需要纠正一次 Codex？**
+**同一个错误，别让我纠正第二次。**
 
-CorrectionKit 是一个极小的、本地优先的 Codex 纠错计数器。原生 Hook 会识别“不要猜”“不是这个意思”等明确纠错，只保存分类和不含原文的事件元数据；你还可以观察批准一条规则后，纠错负担是否发生变化。
+SteerOnce 把你批准过的纠正变成 Codex 可复用的本地规则。原生 Hook 会识别“不要猜”“不是这个意思”等明确纠正，只保存分类和不含原文的事件元数据，并在后续会话中加载你批准的抽象规则。
 
 无账号、无服务端、无后台模型、无运行时依赖。数据库不保存对话原文，也不保存原文指纹。
 
@@ -23,38 +23,38 @@ CorrectionKit 是一个极小的、本地优先的 Codex 纠错计数器。原�
 从 GitHub 安装：
 
 ```bash
-codex plugin marketplace add sophialeeee/correction-kit --ref main
-codex plugin add correction-kit@correction-kit
+codex plugin marketplace add sophialeeee/steeronce --ref main
+codex plugin add steeronce@steeronce
 ```
 
-重启 ChatGPT 桌面端或新建 Codex 会话，然后打开 `/hooks`，检查并信任两个 CorrectionKit Hook。Codex 默认不会执行未经本人确认的新 Hook。
+重启 ChatGPT 桌面端或新建 Codex 会话，然后打开 `/hooks`，检查并信任两个 SteerOnce Hook。Codex 默认不会执行未经本人确认的新 Hook。
 
 若希望直接使用命令行：
 
 ```bash
 python3 -m pip install .
-correction-kit doctor
+steeronce doctor
 ```
 
 ## 常用命令
 
 ```bash
-correction-kit list
-correction-kit show 1
-correction-kit confirm 1 --rule "推断字段前先读取用户给出的接口定义。"
-correction-kit dismiss 2
-correction-kit report
-correction-kit report --json
-correction-kit rules
+steeronce list
+steeronce show 1
+steeronce confirm 1 --rule "推断字段前先读取用户给出的接口定义。"
+steeronce dismiss 2
+steeronce report
+steeronce report --json
+steeronce rules
 ```
 
 `UserPromptSubmit` Hook 自动统计用户回合并识别中英文明确纠错。`SessionStart` Hook 只加载用户批准的抽象规则，而且当前请求始终优先。
 
 ## 为什么故意做小
 
-CorrectionKit 不是又一个 Agent Memory 框架。它只做一件事：用最小且可检查的本地机制，让你的纠错负担变得可见。
+SteerOnce 不是又一个 Agent Memory 框架。它只闭合一个回路：发现纠正、人工批准、复用本地规则，再观察后续纠错负担。
 
-| 项目 | CorrectionKit |
+| 项目 | SteerOnce |
 |---|---|
 | 运行时 | 一个 Python 标准库文件 |
 | 采集 | Codex 原生生命周期 Hook |
@@ -85,8 +85,8 @@ CorrectionKit 不是又一个 Agent Memory 框架。它只做一件事：用最�
 ## 排障
 
 - 没有候选事件：打开 `/hooks` 检查并信任 Hook，然后新建会话。
-- 误报：运行 `correction-kit dismiss <id>`。
-- 规则未加载：先用 `correction-kit rules` 确认存在已批准规则，再新建会话。
+- 误报：运行 `steeronce dismiss <id>`。
+- 规则未加载：先用 `steeronce rules` 确认存在已批准规则，再新建会话。
 
 ## 开发
 
@@ -94,7 +94,7 @@ CorrectionKit 不是又一个 Agent Memory 框架。它只做一件事：用最�
 python3 -m unittest discover -s tests -v
 ```
 
-数据库默认位于 `~/.local/share/correction-kit/corrections.db`。
+数据库默认位于 `~/.local/share/steeronce/corrections.db`。首次运行时会复制已有的 CorrectionKit 数据库，不删除旧文件。
 
 ## 参与贡献
 

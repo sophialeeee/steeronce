@@ -1,10 +1,10 @@
-# CorrectionKit
+# SteerOnce
 
 English | [简体中文](README.zh-CN.md)
 
-**How often do you have to correct Codex?**
+**Stop correcting your coding agent twice.**
 
-CorrectionKit is a tiny, local-first correction counter for Codex. A native hook notices explicit corrections such as “don't guess” or “that's not what I meant,” stores only a category and opaque event metadata, and shows whether your correction burden changes after you approve a rule.
+SteerOnce turns corrections you approve into private, reusable rules for Codex. A native hook notices explicit corrections such as “don't guess” or “that's not what I meant,” stores only a category and opaque event metadata, and loads your approved abstract rules in later sessions.
 
 No account. No server. No background model. No dependencies. No prompt text or text fingerprint in the database.
 
@@ -23,17 +23,17 @@ Prerequisites: Codex CLI or the ChatGPT desktop app with Codex, plus Python 3.9 
 From GitHub:
 
 ```bash
-codex plugin marketplace add sophialeeee/correction-kit --ref main
-codex plugin add correction-kit@correction-kit
+codex plugin marketplace add sophialeeee/steeronce --ref main
+codex plugin add steeronce@steeronce
 ```
 
-Restart the ChatGPT desktop app or start a new Codex session. Then open `/hooks`, inspect the two CorrectionKit hooks, and trust them. Codex intentionally skips new or changed non-managed hooks until you approve their exact definition.
+Restart the ChatGPT desktop app or start a new Codex session. Then open `/hooks`, inspect the two SteerOnce hooks, and trust them. Codex intentionally skips new or changed non-managed hooks until you approve their exact definition.
 
 Optional terminal command:
 
 ```bash
 python3 -m pip install .
-correction-kit doctor
+steeronce doctor
 ```
 
 ## What you get
@@ -41,13 +41,13 @@ correction-kit doctor
 The `UserPromptSubmit` hook counts every submitted turn and classifies explicit corrections using deterministic Chinese and English phrases. The `SessionStart` hook injects only user-approved abstract rules; the current request always wins.
 
 ```bash
-correction-kit list
-correction-kit show 1
-correction-kit confirm 1 --rule "Use supplied API definitions before inferring fields."
-correction-kit dismiss 2
-correction-kit report
-correction-kit report --json
-correction-kit rules
+steeronce list
+steeronce show 1
+steeronce confirm 1 --rule "Use supplied API definitions before inferring fields."
+steeronce dismiss 2
+steeronce report
+steeronce report --json
+steeronce rules
 ```
 
 Example report:
@@ -67,9 +67,9 @@ These are personal, observational metrics—not a model benchmark or proof that 
 
 ## Why this is deliberately small
 
-CorrectionKit is not another agent-memory framework. It does one job: make correction burden visible with the smallest trustworthy local mechanism.
+SteerOnce is not another agent-memory framework. It closes one loop: correction, human approval, reusable local rule, and later-session measurement.
 
-| | CorrectionKit |
+| | SteerOnce |
 |---|---|
 | Runtime | One Python standard-library file |
 | Capture | Automatic Codex lifecycle hook |
@@ -95,10 +95,10 @@ See [PRIVACY.md](PRIVACY.md) for the exact storage and threat boundary.
 The hook starts counting after installation. To scan existing Codex JSONL sessions locally:
 
 ```bash
-correction-kit scan ~/.codex/sessions
+steeronce scan ~/.codex/sessions
 ```
 
-`show <id>` reads a short preview from the original local transcript only when explicitly requested. It never copies that preview into CorrectionKit's database.
+`show <id>` reads a short preview from the original local transcript only when explicitly requested. It never copies that preview into SteerOnce's database.
 
 ## Limits
 
@@ -112,17 +112,17 @@ The useful next contributions are new language phrases backed by real false-nega
 ## Troubleshooting
 
 - No candidates appear: open `/hooks`, review the plugin hook, and trust it. Then start a new session.
-- A candidate is wrong: run `correction-kit dismiss <id>`. Deterministic matching intentionally requires human review.
-- Rules do not load: confirm that the event has a non-empty approved rule, then start a new session; `correction-kit rules` shows what is eligible.
+- A candidate is wrong: run `steeronce dismiss <id>`. Deterministic matching intentionally requires human review.
+- Rules do not load: confirm that the event has a non-empty approved rule, then start a new session; `steeronce rules` shows what is eligible.
 
 ## Development
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 /path/to/plugin-creator/scripts/validate_plugin.py plugins/correction-kit
+python3 /path/to/plugin-creator/scripts/validate_plugin.py plugins/steeronce
 ```
 
-The database defaults to `~/.local/share/correction-kit/corrections.db`; pass `--db PATH` for an isolated run.
+The database defaults to `~/.local/share/steeronce/corrections.db`; pass `--db PATH` for an isolated run. On first use, an existing CorrectionKit database is copied forward without deleting the original.
 
 ## Contributing
 

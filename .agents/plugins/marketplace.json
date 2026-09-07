@@ -1,14 +1,14 @@
 {
-  "name": "correction-kit",
+  "name": "steeronce",
   "interface": {
-    "displayName": "CorrectionKit"
+    "displayName": "SteerOnce"
   },
   "plugins": [
     {
-      "name": "correction-kit",
+      "name": "steeronce",
       "source": {
         "source": "local",
-        "path": "./plugins/correction-kit"
+        "path": "./plugins/steeronce"
       },
       "policy": {
         "installation": "AVAILABLE",

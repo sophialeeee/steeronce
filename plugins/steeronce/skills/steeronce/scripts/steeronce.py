@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_DB = Path.home() / ".local" / "share" / "correction-kit" / "corrections.db"
+DEFAULT_DB = Path.home() / ".local" / "share" / "steeronce" / "corrections.db"
+LEGACY_DB = Path.home() / ".local" / "share" / "correction-kit" / "corrections.db"
 DEFAULT_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 DETECTOR_VERSION = 3
 
@@ -135,7 +136,22 @@ def event_key(*parts: object) -> str:
     return digest("\0".join(str(part) for part in parts))
 
 
+def migrate_legacy_db(target: Path, legacy: Path) -> None:
+    if target.exists() or not legacy.is_file():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    source = sqlite3.connect(f"file:{legacy}?mode=ro", uri=True)
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        source.close()
+        destination.close()
+
+
 def connect(path: Path) -> sqlite3.Connection:
+    if path == DEFAULT_DB:
+        migrate_legacy_db(path, LEGACY_DB)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         path.parent.chmod(0o700)
@@ -518,7 +534,7 @@ def handle_hook(db: sqlite3.Connection, payload: dict) -> dict | None:
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": (
-                    "User-approved CorrectionKit rules. Apply them when relevant; "
+                    "User-approved SteerOnce rules. Apply them when relevant; "
                     "the current user request takes precedence.\n" + lines
                 ),
             }
@@ -647,7 +663,7 @@ def doctor(db: sqlite3.Connection, db_path: Path) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="correction-kit")
+    root = argparse.ArgumentParser(prog="steeronce")
     root.add_argument("--db", type=Path, default=DEFAULT_DB)
     commands = root.add_subparsers(dest="command", required=True)
 

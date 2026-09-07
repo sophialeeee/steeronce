@@ -1,0 +1,36 @@
+{
+  "name": "steeronce",
+  "version": "0.1.0",
+  "description": "Turn approved Codex corrections into private reusable rules",
+  "license": "MIT",
+  "homepage": "https://github.com/sophialeeee/steeronce",
+  "repository": "https://github.com/sophialeeee/steeronce",
+  "author": {
+    "name": "Sophia",
+    "url": "https://github.com/sophialeeee"
+  },
+  "keywords": [
+    "codex",
+    "corrections",
+    "guardrails",
+    "privacy"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "SteerOnce",
+    "shortDescription": "Correct your agent once. Keep the rule local.",
+    "longDescription": "A zero-dependency, local-first correction-to-rule loop for Codex. It captures correction categories without raw prompt storage, lets you approve abstract rules, loads them in later sessions, and reports whether correction burden changes over time.",
+    "developerName": "Sophia",
+    "category": "Productivity",
+    "capabilities": [
+      "Local",
+      "Private",
+      "Guardrails"
+    ],
+    "defaultPrompt": [
+      "Show my recent correction candidates.",
+      "Report my correction burden.",
+      "List my approved agent rules."
+    ]
+  }
+}

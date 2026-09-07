@@ -9,13 +9,13 @@ from pathlib import Path
 MODULE_PATH = (
     Path(__file__).parents[1]
     / "plugins"
-    / "correction-kit"
+    / "steeronce"
     / "skills"
-    / "correction-kit"
+    / "steeronce"
     / "scripts"
-    / "correction_kit.py"
+    / "steeronce.py"
 )
-SPEC = importlib.util.spec_from_file_location("correction_kit", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("steeronce", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
@@ -33,13 +33,13 @@ def message(role: str, text: str) -> dict:
     }
 
 
-class CorrectionKitTest(unittest.TestCase):
+class SteerOnceTest(unittest.TestCase):
     def test_plugin_uses_portable_hook_paths(self):
         root = Path(__file__).parents[1]
-        plugin = root / "plugins" / "correction-kit"
+        plugin = root / "plugins" / "steeronce"
         manifest = json.loads((plugin / ".codex-plugin" / "plugin.json").read_text())
         hooks = json.loads((plugin / "hooks" / "hooks.json").read_text())
-        self.assertEqual(manifest["name"], "correction-kit")
+        self.assertEqual(manifest["name"], "steeronce")
         commands = [
             hook["command"]
             for groups in hooks["hooks"].values()
@@ -74,6 +74,28 @@ class CorrectionKitTest(unittest.TestCase):
             self.assertNotEqual(fingerprint, old_fingerprint)
             self.assertEqual(version, MODULE.DETECTOR_VERSION)
             db.close()
+
+    def test_legacy_database_is_copied_without_deleting_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "correction-kit" / "corrections.db"
+            target = root / "steeronce" / "corrections.db"
+            legacy.parent.mkdir()
+            db = sqlite3.connect(legacy)
+            db.execute("CREATE TABLE sample (value TEXT)")
+            db.execute("INSERT INTO sample VALUES ('existing local data')")
+            db.commit()
+            db.close()
+
+            MODULE.migrate_legacy_db(target, legacy)
+
+            db = sqlite3.connect(target)
+            self.assertEqual(
+                db.execute("SELECT value FROM sample").fetchone()[0],
+                "existing local data",
+            )
+            db.close()
+            self.assertTrue(legacy.exists())
 
     def test_scan_is_private_and_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
