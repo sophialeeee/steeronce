@@ -1,0 +1,29 @@
+{
+  "description": "Local CorrectionKit capture and approved-rule loading.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PLUGIN_ROOT/skills/correction-kit/scripts/correction_kit.py\" hook",
+            "timeout": 3,
+            "additionalContextLimit": 1000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PLUGIN_ROOT/skills/correction-kit/scripts/correction_kit.py\" hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

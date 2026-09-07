@@ -1,0 +1,36 @@
+{
+  "name": "correction-kit",
+  "version": "0.1.0",
+  "description": "Private correction metrics for Codex",
+  "license": "MIT",
+  "homepage": "https://github.com/sophialeeee/correction-kit",
+  "repository": "https://github.com/sophialeeee/correction-kit",
+  "author": {
+    "name": "Sophia",
+    "url": "https://github.com/sophialeeee"
+  },
+  "keywords": [
+    "codex",
+    "corrections",
+    "privacy",
+    "evals"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Correction Kit",
+    "shortDescription": "Count agent corrections without storing prompts.",
+    "longDescription": "A zero-dependency, local-first correction counter for Codex. It captures correction categories without raw prompt storage, lets you approve abstract rules, and reports whether correction burden changes over time.",
+    "developerName": "CorrectionKit contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Local",
+      "Private",
+      "Analytics"
+    ],
+    "defaultPrompt": [
+      "Show my recent correction candidates.",
+      "Report my correction burden.",
+      "List my approved agent rules."
+    ]
+  }
+}
