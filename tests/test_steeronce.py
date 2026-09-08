@@ -97,7 +97,7 @@ class SteerOnceTest(unittest.TestCase):
             db.close()
             self.assertTrue(legacy.exists())
 
-    def test_scan_is_private_and_idempotent(self):
+    def test_scan_counts_history_without_classifying_text(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             session = root / "session.jsonl"
@@ -113,24 +113,9 @@ class SteerOnceTest(unittest.TestCase):
             db = MODULE.connect(db_path)
 
             inserted, assistants, users = MODULE.scan_file(db, session)
-            self.assertEqual((inserted, assistants, users), (1, 2, 3))
+            self.assertEqual((inserted, assistants, users), (0, 2, 3))
             self.assertEqual(MODULE.scan_file(db, session), (0, 0, 0))
-
-            row = db.execute(
-                "SELECT category, status, content_hash FROM events"
-            ).fetchone()
-            self.assertEqual(row[:2], ("intent_mismatch", "candidate"))
-            self.assertNotIn("不是让你", row[2])
-            self.assertNotEqual(row[2], MODULE.digest(records[2]["payload"]["content"][0]["text"]))
-
-            columns = {item[1] for item in db.execute("PRAGMA table_info(events)")}
-            self.assertNotIn("raw_text", columns)
-
-            self.assertEqual(MODULE.set_status(db, 1, "confirmed", "Do not clone the example."), 0)
-            self.assertEqual(
-                db.execute("SELECT rule FROM events WHERE id = 1").fetchone()[0],
-                "Do not clone the example.",
-            )
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)
             db.close()
 
     def test_explicit_record_contains_no_raw_text(self):
@@ -144,7 +129,7 @@ class SteerOnceTest(unittest.TestCase):
             self.assertEqual(row, ("skill", "scope_overreach", "confirmed", None))
             db.close()
 
-    def test_hooks_capture_hashes_and_load_only_approved_rules(self):
+    def test_hook_registers_turn_and_semantic_mark_loads_approved_rule(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             transcript = root / "session.jsonl"
@@ -152,22 +137,39 @@ class SteerOnceTest(unittest.TestCase):
             db = MODULE.connect(root / "corrections.db")
             prompt = "不要猜，我已经把接口定义给你了。"
 
-            self.assertIsNone(MODULE.handle_hook(db, {
+            output = MODULE.handle_hook(db, {
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "session-1",
                 "transcript_path": str(transcript),
                 "prompt": prompt,
-            }))
+                "turn_id": "turn-1",
+            })
+            event_key, category = db.execute(
+                "SELECT event_key, correction_category FROM interactions"
+            ).fetchone()
+            context = output["hookSpecificOutput"]["additionalContext"]
+            self.assertIsNone(category)
+            self.assertIn(event_key, context)
+            self.assertNotIn(prompt, json.dumps(output, ensure_ascii=False))
+
+            self.assertEqual(
+                MODULE.mark_interaction(db, event_key, "unsupported_assumption"),
+                0,
+            )
             row = db.execute(
-                "SELECT id, category, status, content_hash FROM events"
+                "SELECT id, category, status, source_kind, content_hash FROM events"
             ).fetchone()
-            self.assertEqual(row[1:3], ("unsupported_assumption", "candidate"))
-            self.assertNotEqual(row[3], prompt)
-            interaction = db.execute(
-                "SELECT correction_category FROM interactions"
-            ).fetchone()
-            self.assertEqual(interaction[0], "unsupported_assumption")
-            self.assertNotEqual(row[3], MODULE.digest(prompt))
+            self.assertEqual(row[1:4], ("unsupported_assumption", "candidate", "semantic"))
+            self.assertEqual(row[4], event_key)
+            self.assertEqual(
+                db.execute("SELECT correction_category FROM interactions").fetchone()[0],
+                "unsupported_assumption",
+            )
+            self.assertEqual(
+                MODULE.mark_interaction(db, event_key, "unsupported_assumption"),
+                0,
+            )
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 1)
 
             transcript.write_text(
                 json.dumps(message("user", prompt)) + "\n", encoding="utf-8"

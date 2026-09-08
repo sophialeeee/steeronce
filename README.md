@@ -4,14 +4,14 @@ English | [简体中文](README.zh-CN.md)
 
 **Stop correcting your coding agent twice.**
 
-SteerOnce turns corrections you approve into private, reusable rules for Codex. A native hook notices explicit corrections such as “don't guess” or “that's not what I meant,” stores only a category and opaque event metadata, and loads your approved abstract rules in later sessions.
+SteerOnce turns corrections you approve into private, reusable rules for Codex. The Codex model already answering your turn understands whether you are correcting it; SteerOnce stores only its category and opaque event metadata, then loads your approved abstract rules in later sessions.
 
-No account. No server. No background model. No dependencies. No prompt text or text fingerprint in the database.
+No account. No server. No extra model call. No dependencies. No prompt text or text fingerprint in the database.
 
 ```text
 you correct Codex
        ↓
-local phrase match → candidate → human review → optional rule
+current Codex model → category → candidate → human review → optional rule
                                               ↓
                                later-session correction rate
 ```
@@ -27,7 +27,7 @@ codex plugin marketplace add sophialeeee/steeronce --ref main
 codex plugin add steeronce@steeronce
 ```
 
-Restart the ChatGPT desktop app or start a new Codex session. Then open `/hooks`, inspect the two SteerOnce hooks, and trust them. Codex intentionally skips new or changed non-managed hooks until you approve their exact definition.
+Restart the ChatGPT desktop app or start a new Codex session. To review changed hooks, launch `codex` in a terminal, enter `/hooks`, inspect the two SteerOnce hooks, and trust their exact definitions.
 
 Optional terminal command:
 
@@ -38,7 +38,7 @@ steeronce doctor
 
 ## What you get
 
-The `UserPromptSubmit` hook counts every submitted turn and classifies explicit corrections using deterministic Chinese and English phrases. The `SessionStart` hook injects only user-approved abstract rules; the current request always wins.
+The `UserPromptSubmit` hook gives each submitted turn an opaque local event key. The current Codex model uses the full conversational meaning—not a keyword table—to mark explicit corrections. This reuses the model already handling the turn, so SteerOnce makes no second model or network request. The `SessionStart` hook injects only user-approved abstract rules; the current request always wins.
 
 ```bash
 steeronce list
@@ -72,11 +72,11 @@ SteerOnce is not another agent-memory framework. It closes one loop: correction,
 | | SteerOnce |
 |---|---|
 | Runtime | One Python standard-library file |
-| Capture | Automatic Codex lifecycle hook |
+| Capture | Codex hook plus current-turn semantic classification |
 | Stored conversation text | None |
 | Stored text fingerprint | None |
 | Rule activation | Human approval only |
-| Network calls | None |
+| Extra model/network calls | None |
 | Output | Review queue, terminal report, aggregate JSON |
 
 See [PRIVACY.md](PRIVACY.md) for the exact storage and threat boundary.
@@ -92,27 +92,28 @@ See [PRIVACY.md](PRIVACY.md) for the exact storage and threat boundary.
 
 ## Historical backfill
 
-The hook starts counting after installation. To scan existing Codex JSONL sessions locally:
+The hook starts semantic classification after installation. To count turns in existing Codex JSONL sessions locally:
 
 ```bash
 steeronce scan ~/.codex/sessions
 ```
 
-`show <id>` reads a short preview from the original local transcript only when explicitly requested. It never copies that preview into SteerOnce's database.
+Historical scanning does not classify old text. `show <id>` remains available for legacy candidates: it reads a short preview from the original local transcript only when explicitly requested and never copies that preview into SteerOnce's database. New semantic candidates contain no transcript location or preview.
 
 ## Limits
 
-- v0.1 recognizes a small deterministic phrase list, so candidates need review.
+- Semantic classification can still be wrong, so candidates require human review before becoming rules.
+- Old sessions can be counted but cannot be semantically backfilled without sending their text through a model; SteerOnce deliberately does not do that.
 - The before/after report is directional; task mix and small samples matter.
 - The plugin currently supports Codex only.
 - Approved rules are instructions, not guaranteed behavior changes.
 
-The useful next contributions are new language phrases backed by real false-negative examples, privacy-preserving adapters for other coding agents, and better recurrence measurement—not a bigger framework.
+The useful next contributions are privacy-preserving adapters for other coding agents, better review UX, and better recurrence measurement—not a bigger framework.
 
 ## Troubleshooting
 
-- No candidates appear: open `/hooks`, review the plugin hook, and trust it. Then start a new session.
-- A candidate is wrong: run `steeronce dismiss <id>`. Deterministic matching intentionally requires human review.
+- No candidates appear: launch `codex` in a terminal, enter `/hooks`, review and trust the plugin hooks, then start a new session.
+- A candidate is wrong: run `steeronce dismiss <id>`. Semantic classification intentionally requires human review.
 - Rules do not load: confirm that the event has a non-empty approved rule, then start a new session; `steeronce rules` shows what is eligible.
 
 ## Development
@@ -126,7 +127,7 @@ The database defaults to `~/.local/share/steeronce/corrections.db`; pass `--db P
 
 ## Contributing
 
-Open an issue with the false positive or missed correction category before expanding the phrase list. Do not include private transcript text, source code, or secrets. Pull requests should include one focused test.
+Open an issue for a false positive, missed correction, or unclear category. Do not include private transcript text, source code, or secrets. Pull requests should include one focused test.
 
 ## License
 

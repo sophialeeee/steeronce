@@ -5,7 +5,15 @@ description: Turn explicit user corrections during AI-assisted work into local, 
 
 # SteerOnce
 
-The installed `UserPromptSubmit` hook records a local candidate when the user explicitly corrects the agent. Do not record it again from the skill. Respond to the correction first; never interrupt the user's work to promote a rule.
+The installed `UserPromptSubmit` hook registers an anonymous local interaction and adds its opaque SteerOnce event key to the current turn. It does not classify the user's words. Use your understanding of the conversation to decide whether the user is explicitly correcting the agent's behavior or output.
+
+Respond to the user's correction first. If it is an explicit correction, choose exactly one primary category and mark the event:
+
+```bash
+python3 <this-skill-directory>/scripts/steeronce.py mark <event-key> --category <category>
+```
+
+Do not mark a changed requirement, ordinary follow-up, disagreement of taste, rhetorical emphasis without a correction, or ambiguous feedback. If uncertain, do not mark it. Never pass conversation text, code, filenames, secrets, personal information, rule text, or other evidence to the command. Only the opaque event key and category are allowed.
 
 To inspect already approved personal rules, run the bundled script from this skill's resolved installation directory:
 
@@ -28,6 +36,4 @@ Choose exactly one category:
 - `incomplete_verification`: claimed completion without required checks.
 - `implementation_error`: produced behavior that failed.
 
-Do not record a changed requirement, ordinary follow-up, disagreement of taste, or ambiguous feedback. Do not pass conversation text, code, filenames, secrets, personal information, or other evidence to the command. The event is metadata-only and local.
-
-Recording a correction does not authorize editing `AGENTS.md`, `CLAUDE.md`, memories, or other instructions. Suggest a durable rule only after the same confirmed category recurs, and obtain user approval before saving it. Confirmed rules are loaded by the `SessionStart` hook.
+Marking creates a local candidate; it does not approve or activate a rule. It also does not authorize editing `AGENTS.md`, `CLAUDE.md`, memories, or other instructions. When a correction clearly generalizes, suggest a short durable rule without exposing private context, and obtain user approval before saving it. Never interrupt the current task merely to promote a rule. Confirmed rules are loaded by the `SessionStart` hook.

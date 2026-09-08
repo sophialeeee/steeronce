@@ -16,65 +16,16 @@ from pathlib import Path
 DEFAULT_DB = Path.home() / ".local" / "share" / "steeronce" / "corrections.db"
 LEGACY_DB = Path.home() / ".local" / "share" / "correction-kit" / "corrections.db"
 DEFAULT_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
-DETECTOR_VERSION = 3
+DETECTOR_VERSION = 4
 
-CATEGORIES: dict[str, tuple[str, ...]] = {
-    "scope_overreach": (
-        "谁让你",
-        "没让你",
-        "不要改",
-        "别改",
-        "didn't ask you to",
-        "do not change",
-        "don't change",
-    ),
-    "unsupported_assumption": (
-        "不要猜",
-        "别猜",
-        "凭什么猜",
-        "don't guess",
-        "stop assuming",
-        "made that up",
-        "hallucinat",
-    ),
-    "ignored_context": (
-        "都给你了",
-        "已经给你",
-        "我已经说了",
-        "read what i sent",
-        "already gave you",
-        "already told you",
-    ),
-    "intent_mismatch": (
-        "我意思",
-        "我意思是",
-        "我的意思是",
-        "你理解错",
-        "不是这个意思",
-        "不是让你",
-        "非要做类似",
-        "not what i meant",
-        "that's not what i meant",
-        "you misunderstood",
-    ),
-    "incomplete_verification": (
-        "没测试",
-        "没有测试",
-        "没验证",
-        "没有验证",
-        "did you test",
-        "not tested",
-        "not verified",
-    ),
-    "implementation_error": (
-        "还是不行",
-        "又报错",
-        "仍然报错",
-        "doesn't work",
-        "still broken",
-        "still failing",
-    ),
-}
+CATEGORIES = (
+    "intent_mismatch",
+    "unsupported_assumption",
+    "ignored_context",
+    "scope_overreach",
+    "incomplete_verification",
+    "implementation_error",
+)
 
 
 SCHEMA = """
@@ -199,20 +150,6 @@ def message_text(payload: dict) -> str | None:
     return "\n".join(pieces).strip() or None
 
 
-def detect(text: str) -> tuple[str, float] | None:
-    lowered = text.casefold()
-    matches: list[tuple[int, str]] = []
-    for category, phrases in CATEGORIES.items():
-        longest = max((len(p) for p in phrases if p.casefold() in lowered), default=0)
-        if longest:
-            matches.append((longest, category))
-    if not matches:
-        return None
-    length, category = max(matches)
-    confidence = min(0.98, 0.72 + length / 100)
-    return category, confidence
-
-
 def insert_candidate(
     db: sqlite3.Connection,
     *,
@@ -287,32 +224,11 @@ def scan_file(db: sqlite3.Connection, path: Path) -> tuple[int, int, int]:
 
     assistant_turns = 0
     user_turns = 0
-    inserted = 0
-    session_hash = digest(str(path))[:16]
-    hook_observed = db.execute(
-        "SELECT 1 FROM interactions WHERE session_hash=? LIMIT 1", (session_hash,)
-    ).fetchone() is not None
-    for line_number, role, text, session_hash in codex_messages(path):
+    for _, role, _, _ in codex_messages(path):
         if role == "assistant":
             assistant_turns += 1
-            continue
-        user_turns += 1
-        result = detect(text)
-        if not result:
-            continue
-        category, confidence = result
-        if hook_observed:
-            continue
-        inserted += insert_candidate(
-            db,
-            source_kind="codex",
-            source_path=str(path),
-            source_line=line_number,
-            session_hash=session_hash,
-            opaque_key=event_key("codex", path, line_number, session_hash),
-            category=category,
-            confidence=confidence,
-        )
+        else:
+            user_turns += 1
 
     db.execute(
         """
@@ -334,7 +250,7 @@ def scan_file(db: sqlite3.Connection, path: Path) -> tuple[int, int, int]:
         ),
     )
     db.commit()
-    return inserted, assistant_turns, user_turns
+    return 0, assistant_turns, user_turns
 
 
 def scan(db: sqlite3.Connection, roots: list[Path]) -> int:
@@ -375,6 +291,51 @@ def record(db: sqlite3.Connection, category: str, rule: str | None) -> int:
     )
     db.commit()
     print(f"recorded category={category} raw_text_stored=no")
+    return 0
+
+
+def mark_interaction(db: sqlite3.Connection, interaction_key: str, category: str) -> int:
+    if (
+        len(interaction_key) != 64
+        or any(character not in "0123456789abcdef" for character in interaction_key)
+    ):
+        print("invalid event key", file=sys.stderr)
+        return 2
+    if category not in CATEGORIES:
+        print(f"unknown category: {category}", file=sys.stderr)
+        return 2
+
+    row = db.execute(
+        "SELECT session_hash, correction_category FROM interactions WHERE event_key=?",
+        (interaction_key,),
+    ).fetchone()
+    if row is None:
+        print("event key not found", file=sys.stderr)
+        return 2
+    session_hash, existing_category = row
+    if existing_category is not None:
+        if existing_category != category:
+            print(f"event already marked as {existing_category}", file=sys.stderr)
+            return 2
+        print(f"marked category={category} raw_text_stored=no")
+        return 0
+
+    db.execute(
+        "UPDATE interactions SET correction_category=?, detector_version=? WHERE event_key=?",
+        (category, DETECTOR_VERSION, interaction_key),
+    )
+    insert_candidate(
+        db,
+        source_kind="semantic",
+        source_path="",
+        source_line=0,
+        session_hash=session_hash,
+        opaque_key=interaction_key,
+        category=category,
+        confidence=1.0,
+    )
+    db.commit()
+    print(f"marked category={category} raw_text_stored=no")
     return 0
 
 
@@ -485,33 +446,28 @@ def handle_hook(db: sqlite3.Connection, payload: dict) -> dict | None:
         session_id = str(payload.get("session_id") or "unknown")
         source_path = str(transcript or f"hook:{session_id}")
         session_hash = digest(source_path)[:16]
-        result = detect(prompt)
-        category = result[0] if result else None
         turn_id = str(payload.get("turn_id") or secrets.token_hex(16))
+        interaction_key = digest(f"{session_hash}:{turn_id}")
         db.execute(
             """
             INSERT OR IGNORE INTO interactions (
                 event_key, created_at, session_hash, correction_category, detector_version
             ) VALUES (?, ?, ?, ?, ?)
             """,
-            (digest(f"{session_hash}:{turn_id}"), now(), session_hash, category, DETECTOR_VERSION),
-        )
-        if not result:
-            db.commit()
-            return None
-        category, confidence = result
-        insert_candidate(
-            db,
-            source_kind="hook",
-            source_path=source_path,
-            source_line=0,
-            session_hash=session_hash,
-            opaque_key=event_key("hook", session_hash, turn_id),
-            category=category,
-            confidence=confidence,
+            (interaction_key, now(), session_hash, None, DETECTOR_VERSION),
         )
         db.commit()
-        return None
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": (
+                    f"SteerOnce event `{interaction_key}`. If and only if this user "
+                    "message explicitly corrects the agent's behavior or output, use "
+                    "the SteerOnce skill to classify and mark this event. Otherwise "
+                    "ignore it."
+                ),
+            }
+        }
     if event == "SessionStart":
         current_rules = approved_rules(db)
         if not current_rules:
@@ -676,6 +632,10 @@ def parser() -> argparse.ArgumentParser:
     record_command.add_argument("--category", required=True, choices=sorted(CATEGORIES))
     record_command.add_argument("--rule")
 
+    mark_command = commands.add_parser("mark", help=argparse.SUPPRESS)
+    mark_command.add_argument("event_key")
+    mark_command.add_argument("--category", required=True, choices=sorted(CATEGORIES))
+
     list_command = commands.add_parser("list", help="list metadata-only events")
     list_command.add_argument("--status", choices=("candidate", "confirmed", "dismissed"), default="candidate")
 
@@ -705,6 +665,8 @@ def main(argv: list[str] | None = None) -> int:
             return scan(db, args.paths)
         if args.command == "record":
             return record(db, args.category, args.rule)
+        if args.command == "mark":
+            return mark_interaction(db, args.event_key, args.category)
         if args.command == "list":
             return list_events(db, args.status)
         if args.command == "show":

@@ -1,5 +1,5 @@
 {
-  "description": "Local SteerOnce correction capture and approved-rule loading.",
+  "description": "Anonymous turn registration, semantic correction marking, and approved-rule loading.",
   "hooks": {
     "SessionStart": [
       {
