@@ -192,6 +192,32 @@ class SteerOnceTest(unittest.TestCase):
             self.assertEqual(snapshot["hook"]["candidate_corrections"], 1)
             db.close()
 
+    def test_report_splits_resumed_session_at_rule_load_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = MODULE.connect(Path(directory) / "corrections.db")
+            session_hash = "same-session"
+            db.executemany(
+                """
+                INSERT INTO interactions (
+                    event_key, created_at, session_hash, correction_category, detector_version
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    ("before", "2026-09-08T10:00:00+00:00", session_hash, "intent_mismatch", MODULE.DETECTOR_VERSION),
+                    ("after", "2026-09-08T12:00:00+00:00", session_hash, None, MODULE.DETECTOR_VERSION),
+                ],
+            )
+            db.execute(
+                "INSERT INTO rule_loads (session_hash, rules_hash, loaded_at, rule_count) VALUES (?, ?, ?, ?)",
+                (session_hash, "rules", "2026-09-08T11:00:00+00:00", 1),
+            )
+            db.commit()
+
+            hook = MODULE.report_snapshot(db)["hook"]
+            self.assertEqual(hook["before_rules_candidate_per_100_turns"], 100.0)
+            self.assertEqual(hook["after_rules_candidate_per_100_turns"], 0.0)
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -595,7 +595,9 @@ def report_snapshot(db: sqlite3.Connection) -> dict:
             SELECT COUNT(*), COALESCE(SUM(i.correction_category IS NOT NULL), 0)
             FROM interactions i
             WHERE EXISTS (
-                SELECT 1 FROM rule_loads r WHERE r.session_hash=i.session_hash
+                SELECT 1 FROM rule_loads r
+                WHERE r.session_hash=i.session_hash
+                  AND r.loaded_at <= i.created_at
             )
             """
         ).fetchone()
