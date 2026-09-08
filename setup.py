@@ -3,8 +3,8 @@ from setuptools import setup
 
 setup(
     name="steeronce",
-    version="0.2.2",
-    description="Turn approved Codex corrections into private reusable rules",
+    version="0.3.0",
+    description="Teach Codex how you work across sessions, privately",
     url="https://github.com/sophialeeee/steeronce",
     license="MIT",
     python_requires=">=3.9",

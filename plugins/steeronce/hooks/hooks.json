@@ -1,5 +1,5 @@
 {
-  "description": "Anonymous turn registration, semantic correction marking, and approved-rule loading.",
+  "description": "Private working-preference distillation, approval, and scoped loading across sessions.",
   "hooks": {
     "SessionStart": [
       {
@@ -15,6 +15,17 @@
       }
     ],
     "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PLUGIN_ROOT/skills/steeronce/scripts/steeronce.py\" hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
       {
         "hooks": [
           {

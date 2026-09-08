@@ -1,7 +1,7 @@
 {
   "name": "steeronce",
-  "version": "0.2.2",
-  "description": "Turn approved Codex corrections into private reusable rules",
+  "version": "0.3.0",
+  "description": "Teach Codex how you work across sessions, privately",
   "license": "MIT",
   "homepage": "https://github.com/sophialeeee/steeronce",
   "repository": "https://github.com/sophialeeee/steeronce",
@@ -18,19 +18,19 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "SteerOnce",
-    "shortDescription": "Correct your agent once. Keep the rule local.",
-    "longDescription": "A zero-dependency, local-first correction-to-rule loop for Codex. The current Codex model classifies explicit corrections by meaning, SteerOnce stores no raw prompt text, and only user-approved abstract rules load in later sessions.",
+    "shortDescription": "Your AI learns how you work, across sessions.",
+    "longDescription": "A transparent local preference layer for Codex. The current model distills explicit corrections into behavior-only candidates, you approve global or project scope, and relevant preferences load in later sessions without storing prompt text or calling another model.",
     "developerName": "Sophia",
     "category": "Productivity",
     "capabilities": [
       "Local",
       "Private",
-      "Guardrails"
+      "Personalization"
     ],
     "defaultPrompt": [
-      "Show my recent correction candidates.",
-      "Report my correction burden.",
-      "List my approved agent rules."
+      "Show my recent working-preference candidates.",
+      "List the preferences my AI has learned.",
+      "Report whether repeated corrections are decreasing."
     ]
   }
 }

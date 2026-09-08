@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -16,8 +17,9 @@ from pathlib import Path
 DEFAULT_DB = Path.home() / ".local" / "share" / "steeronce" / "corrections.db"
 LEGACY_DB = Path.home() / ".local" / "share" / "correction-kit" / "corrections.db"
 DEFAULT_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
-DETECTOR_VERSION = 4
+DETECTOR_VERSION = 5
 PRIVACY_MIGRATION_VERSION = 3
+MARKER_PATTERN = re.compile(r"<!--steeronce:(.*?)-->", re.DOTALL)
 
 CATEGORIES = (
     "intent_mismatch",
@@ -26,6 +28,17 @@ CATEGORIES = (
     "scope_overreach",
     "incomplete_verification",
     "implementation_error",
+)
+
+SCOPES = ("global", "project")
+TRIGGERS = (
+    "general",
+    "communication",
+    "diagnosis",
+    "implementation",
+    "research",
+    "review",
+    "verification",
 )
 
 
@@ -43,6 +56,9 @@ CREATE TABLE IF NOT EXISTS events (
     status TEXT NOT NULL CHECK(status IN ('candidate', 'confirmed', 'dismissed')),
     rule TEXT,
     confirmed_at TEXT,
+    scope_kind TEXT NOT NULL DEFAULT 'global',
+    scope_key TEXT,
+    trigger TEXT NOT NULL DEFAULT 'general',
     detector_version INTEGER NOT NULL,
     UNIQUE(source_kind, source_path, source_line, content_hash)
 );
@@ -61,6 +77,7 @@ CREATE TABLE IF NOT EXISTS interactions (
     event_key TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
     session_hash TEXT NOT NULL,
+    project_key TEXT,
     correction_category TEXT,
     detector_version INTEGER NOT NULL
 );
@@ -88,6 +105,11 @@ def event_key(*parts: object) -> str:
     return digest("\0".join(str(part) for part in parts))
 
 
+def project_key(cwd: str) -> str:
+    """Create a stable local project scope without storing its path."""
+    return digest(str(Path(cwd).expanduser().resolve()))[:16]
+
+
 def migrate_legacy_db(target: Path, legacy: Path) -> None:
     if target.exists() or not legacy.is_file():
         return
@@ -111,9 +133,21 @@ def connect(path: Path) -> sqlite3.Connection:
         pass
     db = sqlite3.connect(path)
     db.executescript(SCHEMA)
-    columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
-    if "confirmed_at" not in columns:
-        db.execute("ALTER TABLE events ADD COLUMN confirmed_at TEXT")
+    event_columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
+    event_migrations = {
+        "confirmed_at": "TEXT",
+        "scope_kind": "TEXT NOT NULL DEFAULT 'global'",
+        "scope_key": "TEXT",
+        "trigger": "TEXT NOT NULL DEFAULT 'general'",
+    }
+    for column, definition in event_migrations.items():
+        if column not in event_columns:
+            db.execute(f"ALTER TABLE events ADD COLUMN {column} {definition}")
+    interaction_columns = {
+        row[1] for row in db.execute("PRAGMA table_info(interactions)")
+    }
+    if "project_key" not in interaction_columns:
+        db.execute("ALTER TABLE interactions ADD COLUMN project_key TEXT")
     legacy = db.execute(
         """
         SELECT id, source_kind, source_path, source_line, session_hash
@@ -295,11 +329,99 @@ def record(db: sqlite3.Connection, category: str, rule: str | None) -> int:
     return 0
 
 
-def mark_interaction(db: sqlite3.Connection, interaction_key: str, category: str) -> int:
+def valid_event_key(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def normalize_rule(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    rule = " ".join(value.split())
+    if not rule or len(rule) > 300 or "<!--" in rule or "-->" in rule:
+        return None
+    return rule
+
+
+def propose_interaction(
+    db: sqlite3.Connection,
+    interaction_key: str,
+    category: str,
+    scope_kind: str,
+    trigger: str,
+    rule: str,
+) -> int | None:
+    normalized_rule = normalize_rule(rule)
     if (
-        len(interaction_key) != 64
-        or any(character not in "0123456789abcdef" for character in interaction_key)
+        not valid_event_key(interaction_key)
+        or category not in CATEGORIES
+        or scope_kind not in SCOPES
+        or trigger not in TRIGGERS
+        or normalized_rule is None
     ):
+        return None
+    interaction = db.execute(
+        """
+        SELECT session_hash, project_key, correction_category
+        FROM interactions WHERE event_key=?
+        """,
+        (interaction_key,),
+    ).fetchone()
+    if interaction is None:
+        return None
+    session_hash, interaction_project_key, existing_category = interaction
+    if existing_category is not None and existing_category != category:
+        return None
+    preference_scope_key = interaction_project_key if scope_kind == "project" else None
+    if scope_kind == "project" and not preference_scope_key:
+        return None
+
+    db.execute(
+        "UPDATE interactions SET correction_category=?, detector_version=? WHERE event_key=?",
+        (category, DETECTOR_VERSION, interaction_key),
+    )
+    insert_candidate(
+        db,
+        source_kind="semantic",
+        source_path="",
+        source_line=0,
+        session_hash=session_hash,
+        opaque_key=interaction_key,
+        category=category,
+        confidence=1.0,
+    )
+    event = db.execute(
+        "SELECT id, status FROM events WHERE content_hash=?",
+        (interaction_key,),
+    ).fetchone()
+    if event is None or event[1] != "candidate":
+        db.rollback()
+        return None
+    db.execute(
+        """
+        UPDATE events
+        SET category=?, rule=?, scope_kind=?, scope_key=?, trigger=?, detector_version=?
+        WHERE id=?
+        """,
+        (
+            category,
+            normalized_rule,
+            scope_kind,
+            preference_scope_key,
+            trigger,
+            DETECTOR_VERSION,
+            event[0],
+        ),
+    )
+    db.commit()
+    return event[0]
+
+
+def mark_interaction(db: sqlite3.Connection, interaction_key: str, category: str) -> int:
+    if not valid_event_key(interaction_key):
         print("invalid event key", file=sys.stderr)
         return 2
     if category not in CATEGORIES:
@@ -340,25 +462,74 @@ def mark_interaction(db: sqlite3.Connection, interaction_key: str, category: str
     return 0
 
 
-def set_status(db: sqlite3.Connection, event_id: int, status: str, rule: str | None) -> int:
-    if rule is not None:
-        rule = " ".join(rule.split())
-        if len(rule) > 300:
-            print("rule must be 300 characters or fewer", file=sys.stderr)
+def set_status(
+    db: sqlite3.Connection,
+    event_id: int,
+    status: str,
+    rule: str | None,
+    scope_kind: str | None = None,
+    project_scope_key: str | None = None,
+    emit: bool = True,
+) -> int:
+    event = db.execute(
+        "SELECT rule, scope_kind, scope_key, content_hash FROM events WHERE id=?",
+        (event_id,),
+    ).fetchone()
+    if event is None:
+        if emit:
+            print(f"event not found: {event_id}", file=sys.stderr)
+        return 2
+    existing_rule, existing_scope, existing_scope_key, content_hash = event
+    normalized_rule = normalize_rule(rule) if rule is not None else existing_rule
+    if status == "confirmed" and not normalized_rule:
+        if emit:
+            print("a non-empty abstract rule is required", file=sys.stderr)
+        return 2
+    if rule is not None and normalized_rule is None:
+        if emit:
+            print("rule must be non-empty and 300 characters or fewer", file=sys.stderr)
+        return 2
+
+    final_scope = scope_kind or existing_scope or "global"
+    if final_scope not in SCOPES:
+        if emit:
+            print(f"unknown scope: {final_scope}", file=sys.stderr)
+        return 2
+    final_scope_key = existing_scope_key
+    if final_scope == "global":
+        final_scope_key = None
+    elif not final_scope_key:
+        final_scope_key = project_scope_key
+        if not final_scope_key:
+            row = db.execute(
+                "SELECT project_key FROM interactions WHERE event_key=?",
+                (content_hash,),
+            ).fetchone()
+            final_scope_key = row[0] if row else None
+        if not final_scope_key:
+            if emit:
+                print("project scope is unavailable for this event", file=sys.stderr)
             return 2
-    cursor = db.execute(
+
+    db.execute(
         """
-        UPDATE events SET status = ?, rule = COALESCE(?, rule),
-            confirmed_at = CASE WHEN ?='confirmed' THEN COALESCE(confirmed_at, ?) ELSE confirmed_at END
-        WHERE id = ?
+        UPDATE events SET status=?, rule=?, scope_kind=?, scope_key=?,
+            confirmed_at=CASE WHEN ?='confirmed' THEN COALESCE(confirmed_at, ?) ELSE confirmed_at END
+        WHERE id=?
         """,
-        (status, rule, status, now(), event_id),
+        (
+            status,
+            normalized_rule,
+            final_scope,
+            final_scope_key,
+            status,
+            now(),
+            event_id,
+        ),
     )
     db.commit()
-    if cursor.rowcount == 0:
-        print(f"event not found: {event_id}", file=sys.stderr)
-        return 2
-    print(f"event={event_id} status={status}")
+    if emit:
+        print(f"event={event_id} status={status} scope={final_scope}")
     return 0
 
 
@@ -372,7 +543,8 @@ def list_events(db: sqlite3.Connection, status: str, include_legacy: bool = Fals
         parameters = (status, DETECTOR_VERSION)
     rows = db.execute(
         """
-        SELECT id, created_at, category, confidence, source_kind, source_line
+        SELECT id, created_at, category, confidence, source_kind, source_line,
+               rule, scope_kind, trigger
         FROM events WHERE status = ?
         """ + legacy_filter + " ORDER BY id DESC",
         parameters,
@@ -380,25 +552,39 @@ def list_events(db: sqlite3.Connection, status: str, include_legacy: bool = Fals
     if not rows:
         print("no events")
         return 0
-    for event_id, created_at, category, confidence, source_kind, source_line in rows:
+    for (
+        event_id, created_at, category, confidence, source_kind, source_line,
+        rule, scope_kind, trigger,
+    ) in rows:
         location = f"line:{source_line}" if source_line else "no-source"
         print(
             f"{event_id:>4}  {category:<25} {confidence:.2f}  "
-            f"{source_kind}:{location}  {created_at}"
+            f"scope={scope_kind} trigger={trigger} {source_kind}:{location}  {created_at}"
         )
+        if rule:
+            print(f"      preference: {rule[:300]}")
     return 0
 
 
 def show_event(db: sqlite3.Connection, event_id: int) -> int:
     row = db.execute(
-        "SELECT source_kind, source_path, source_line, category, status FROM events WHERE id = ?",
+        """
+        SELECT source_kind, source_path, source_line, category, status,
+               rule, scope_kind, trigger
+        FROM events WHERE id = ?
+        """,
         (event_id,),
     ).fetchone()
     if not row:
         print(f"event not found: {event_id}", file=sys.stderr)
         return 2
-    source_kind, source_path, source_line, category, status = row
-    print(f"event={event_id} category={category} status={status}")
+    source_kind, source_path, source_line, category, status, rule, scope_kind, trigger = row
+    print(
+        f"event={event_id} category={category} status={status} "
+        f"scope={scope_kind} trigger={trigger}"
+    )
+    if rule:
+        print(f"proposed_preference={rule}")
     if source_kind != "codex" or not source_path or not source_line:
         print("raw_text_stored=no source_preview=unavailable")
         return 0
@@ -424,24 +610,127 @@ def show_event(db: sqlite3.Connection, event_id: int) -> int:
     return 0
 
 
-def approved_rules(db: sqlite3.Connection) -> list[str]:
-    return [row[0] for row in db.execute(
+def approved_preferences(
+    db: sqlite3.Connection, current_project_key: str | None = None
+) -> list[tuple[str, str, str]]:
+    parameters: tuple[object, ...] = ()
+    scope_filter = ""
+    if current_project_key is not None:
+        scope_filter = " AND (scope_kind='global' OR (scope_kind='project' AND scope_key=?))"
+        parameters = (current_project_key,)
+    rows = db.execute(
         """
-        SELECT DISTINCT rule FROM events
+        SELECT scope_kind, trigger, rule FROM events
         WHERE status = 'confirmed' AND rule IS NOT NULL AND trim(rule) != ''
-        ORDER BY rule LIMIT 20
-        """
-    ).fetchall()]
+        """ + scope_filter + " ORDER BY CASE scope_kind WHEN 'project' THEN 0 ELSE 1 END, id DESC",
+        parameters,
+    ).fetchall()
+    preferences: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for scope_kind, trigger, rule in rows:
+        if rule in seen:
+            continue
+        seen.add(rule)
+        preferences.append((scope_kind, trigger, rule))
+        if len(preferences) == 20:
+            break
+    return preferences
+
+
+def approved_rules(db: sqlite3.Connection) -> list[str]:
+    return [rule for _, _, rule in approved_preferences(db)]
 
 
 def rules(db: sqlite3.Connection) -> int:
-    rows = approved_rules(db)
+    rows = approved_preferences(db)
     if not rows:
         print("no confirmed rules")
         return 0
-    for rule in rows:
-        print(f"- {rule}")
+    for scope_kind, trigger, rule in rows:
+        print(f"- [{scope_kind}; trigger={trigger}] {rule}")
     return 0
+
+
+def hook_identity(payload: dict) -> tuple[str, str]:
+    transcript = payload.get("transcript_path")
+    session_id = str(payload.get("session_id") or "unknown")
+    source_path = str(transcript or f"hook:{session_id}")
+    session_hash = digest(source_path)[:16]
+    turn_id = str(payload.get("turn_id") or "")
+    return session_hash, digest(f"{session_hash}:{turn_id}")
+
+
+def marker_for_event(message: object, expected_event_key: str) -> dict | None:
+    if not isinstance(message, str):
+        return None
+    for encoded in reversed(MARKER_PATTERN.findall(message)):
+        try:
+            marker = json.loads(encoded)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(marker, dict) and marker.get("event") == expected_event_key:
+            return marker
+    return None
+
+
+def latest_candidate(db: sqlite3.Connection, session_hash: str) -> int | None:
+    row = db.execute(
+        """
+        SELECT id FROM events
+        WHERE session_hash=? AND status='candidate'
+          AND rule IS NOT NULL AND trim(rule) != ''
+        ORDER BY id DESC LIMIT 1
+        """,
+        (session_hash,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def apply_stop_marker(db: sqlite3.Connection, payload: dict) -> None:
+    session_hash, expected_event_key = hook_identity(payload)
+    marker = marker_for_event(payload.get("last_assistant_message"), expected_event_key)
+    if marker is None:
+        return
+    interaction = db.execute(
+        "SELECT project_key FROM interactions WHERE event_key=? AND session_hash=?",
+        (expected_event_key, session_hash),
+    ).fetchone()
+    if interaction is None:
+        return
+    current_project_key = interaction[0]
+    action = marker.get("action")
+    if action == "propose":
+        propose_interaction(
+            db,
+            expected_event_key,
+            marker.get("category"),
+            marker.get("scope"),
+            marker.get("trigger"),
+            marker.get("rule"),
+        )
+        return
+    if action not in {"confirm", "confirm_latest", "dismiss", "dismiss_latest"}:
+        return
+    event_id = marker.get("candidate_id")
+    if action.endswith("_latest"):
+        event_id = latest_candidate(db, session_hash)
+    if not isinstance(event_id, int):
+        return
+    if action.startswith("confirm"):
+        scope_kind = marker.get("scope")
+        if scope_kind not in SCOPES:
+            return
+        set_status(
+            db,
+            event_id,
+            "confirmed",
+            None,
+            scope_kind=scope_kind,
+            project_scope_key=current_project_key,
+            emit=False,
+        )
+    else:
+        set_status(db, event_id, "dismissed", None, emit=False)
 
 
 def handle_hook(db: sqlite3.Connection, payload: dict) -> dict | None:
@@ -450,56 +739,68 @@ def handle_hook(db: sqlite3.Connection, payload: dict) -> dict | None:
         prompt = payload.get("prompt")
         if not isinstance(prompt, str):
             return None
-        transcript = payload.get("transcript_path")
-        session_id = str(payload.get("session_id") or "unknown")
-        source_path = str(transcript or f"hook:{session_id}")
-        session_hash = digest(source_path)[:16]
-        turn_id = str(payload.get("turn_id") or secrets.token_hex(16))
-        interaction_key = digest(f"{session_hash}:{turn_id}")
+        session_hash, interaction_key = hook_identity(payload)
+        cwd = str(payload.get("cwd") or ".")
         db.execute(
             """
             INSERT OR IGNORE INTO interactions (
-                event_key, created_at, session_hash, correction_category, detector_version
-            ) VALUES (?, ?, ?, ?, ?)
+                event_key, created_at, session_hash, project_key,
+                correction_category, detector_version
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (interaction_key, now(), session_hash, None, DETECTOR_VERSION),
+            (
+                interaction_key,
+                now(),
+                session_hash,
+                project_key(cwd),
+                None,
+                DETECTOR_VERSION,
+            ),
         )
         db.commit()
         return {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": (
-                    f"SteerOnce event `{interaction_key}`. If and only if this user "
-                    "message explicitly corrects the agent's behavior or output, use "
-                    "the SteerOnce skill to classify and mark this event. Otherwise "
-                    "ignore it."
+                    f"SteerOnce event `{interaction_key}`. Use the SteerOnce skill "
+                    "only if this message explicitly corrects the agent, approves or "
+                    "rejects a proposed preference, or asks to manage SteerOnce. The "
+                    "skill can emit a local marker handled after the response. "
+                    "Otherwise ignore this context."
                 ),
             }
         }
+    if event == "Stop":
+        apply_stop_marker(db, payload)
+        return None
     if event == "SessionStart":
-        current_rules = approved_rules(db)
-        if not current_rules:
+        cwd = str(payload.get("cwd") or ".")
+        current_preferences = approved_preferences(db, project_key(cwd))
+        if not current_preferences:
             return None
-        transcript = payload.get("transcript_path")
-        session_id = str(payload.get("session_id") or "unknown")
-        session_hash = digest(str(transcript or f"hook:{session_id}"))[:16]
-        rules_hash = digest("\n".join(current_rules))
+        session_hash, _ = hook_identity(payload)
+        rendered_preferences = [
+            f"[{scope_kind}; trigger={trigger}] {rule[:300]}"
+            for scope_kind, trigger, rule in current_preferences
+        ]
+        rules_hash = digest("\n".join(rendered_preferences))
         db.execute(
             """
             INSERT OR REPLACE INTO rule_loads (
                 session_hash, rules_hash, loaded_at, rule_count
             ) VALUES (?, ?, ?, ?)
             """,
-            (session_hash, rules_hash, now(), len(current_rules)),
+            (session_hash, rules_hash, now(), len(current_preferences)),
         )
         db.commit()
-        lines = "\n".join(f"- {rule[:300]}" for rule in current_rules)
+        lines = "\n".join(f"- {rule}" for rule in rendered_preferences)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": (
-                    "User-approved SteerOnce rules. Apply them when relevant; "
-                    "the current user request takes precedence.\n" + lines
+                    "User-approved SteerOnce working preferences for this context. "
+                    "Apply them when relevant. The user's current explicit request "
+                    "always takes precedence.\n" + lines
                 ),
             }
         }
@@ -629,7 +930,7 @@ def doctor(db: sqlite3.Connection, db_path: Path) -> int:
     print(f"database={db_path.expanduser().resolve()}")
     print(f"database_mode={mode}")
     print(f"events={event_count}")
-    print(f"approved_rules={len(approved_rules(db))}")
+    print(f"approved_preferences={len(approved_rules(db))}")
     print("raw_prompt_storage=no")
     print("content_fingerprint_storage=no")
     print("network_calls=no")
@@ -669,13 +970,15 @@ def parser() -> argparse.ArgumentParser:
     confirm_command = commands.add_parser("confirm", help="confirm a candidate")
     confirm_command.add_argument("id", type=int)
     confirm_command.add_argument("--rule")
+    confirm_command.add_argument("--scope", choices=SCOPES)
 
     dismiss_command = commands.add_parser("dismiss", help="dismiss a false positive")
     dismiss_command.add_argument("id", type=int)
 
     report_command = commands.add_parser("report", help="print aggregate local metrics")
     report_command.add_argument("--json", action="store_true", help="emit aggregate JSON only")
-    commands.add_parser("rules", help="print user-approved local rules")
+    commands.add_parser("preferences", help="print user-approved working preferences")
+    commands.add_parser("rules", help="alias for preferences")
     commands.add_parser("doctor", help="check the local privacy and storage setup")
     commands.add_parser("hook", help="process a Codex hook payload")
     return root
@@ -696,12 +999,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             return show_event(db, args.id)
         if args.command == "confirm":
-            return set_status(db, args.id, "confirmed", args.rule)
+            return set_status(
+                db, args.id, "confirmed", args.rule, scope_kind=args.scope
+            )
         if args.command == "dismiss":
             return set_status(db, args.id, "dismissed", None)
         if args.command == "report":
             return report(db, args.json)
-        if args.command == "rules":
+        if args.command in {"preferences", "rules"}:
             return rules(db)
         if args.command == "doctor":
             return doctor(db, args.db)
