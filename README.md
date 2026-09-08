@@ -100,6 +100,8 @@ steeronce scan ~/.codex/sessions
 
 Historical scanning does not classify old text. `show <id>` remains available for legacy candidates: it reads a short preview from the original local transcript only when explicitly requested and never copies that preview into SteerOnce's database. New semantic candidates contain no transcript location or preview.
 
+Unreviewed candidates created by the retired phrase detector remain in SQLite for recoverability but are excluded from the default list and report. Use `steeronce list --include-legacy` only if you want to inspect them.
+
 ## Limits
 
 - Semantic classification can still be wrong, so candidates require human review before becoming rules.

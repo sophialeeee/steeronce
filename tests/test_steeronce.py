@@ -72,7 +72,31 @@ class SteerOnceTest(unittest.TestCase):
                 "SELECT content_hash, detector_version FROM events"
             ).fetchone()
             self.assertNotEqual(fingerprint, old_fingerprint)
-            self.assertEqual(version, MODULE.DETECTOR_VERSION)
+            self.assertEqual(version, MODULE.PRIVACY_MIGRATION_VERSION)
+            db.close()
+
+    def test_default_metrics_exclude_unreviewed_phrase_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = MODULE.connect(Path(directory) / "corrections.db")
+            db.executemany(
+                """
+                INSERT INTO events (
+                    created_at, source_kind, content_hash, category, confidence,
+                    status, detector_version
+                ) VALUES (?, ?, ?, ?, 1.0, ?, ?)
+                """,
+                [
+                    (MODULE.now(), "codex", "legacy", "intent_mismatch", "candidate", 3),
+                    (MODULE.now(), "semantic", "current", "ignored_context", "candidate", 4),
+                    (MODULE.now(), "skill", "confirmed", "scope_overreach", "confirmed", 3),
+                ],
+            )
+            db.commit()
+
+            snapshot = MODULE.report_snapshot(db)
+            self.assertEqual(snapshot["candidate_corrections"], 1)
+            self.assertEqual(snapshot["confirmed_corrections"], 1)
+            self.assertNotIn("intent_mismatch", snapshot["categories"])
             db.close()
 
     def test_legacy_database_is_copied_without_deleting_source(self):

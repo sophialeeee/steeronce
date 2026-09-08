@@ -17,6 +17,7 @@ DEFAULT_DB = Path.home() / ".local" / "share" / "steeronce" / "corrections.db"
 LEGACY_DB = Path.home() / ".local" / "share" / "correction-kit" / "corrections.db"
 DEFAULT_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 DETECTOR_VERSION = 4
+PRIVACY_MIGRATION_VERSION = 3
 
 CATEGORIES = (
     "intent_mismatch",
@@ -126,7 +127,7 @@ def connect(path: Path) -> sqlite3.Connection:
             opaque_key = event_key("legacy", event_id, secrets.token_hex(16))
         db.execute(
             "UPDATE events SET content_hash=?, detector_version=? WHERE id=?",
-            (opaque_key, DETECTOR_VERSION, event_id),
+            (opaque_key, PRIVACY_MIGRATION_VERSION, event_id),
         )
     db.execute(
         "UPDATE events SET confirmed_at=created_at WHERE status='confirmed' AND confirmed_at IS NULL"
@@ -361,13 +362,20 @@ def set_status(db: sqlite3.Connection, event_id: int, status: str, rule: str | N
     return 0
 
 
-def list_events(db: sqlite3.Connection, status: str) -> int:
+def list_events(db: sqlite3.Connection, status: str, include_legacy: bool = False) -> int:
+    legacy_filter = ""
+    parameters: tuple[object, ...] = (status,)
+    if status == "candidate" and not include_legacy:
+        legacy_filter = (
+            " AND NOT (source_kind IN ('codex', 'hook') AND detector_version < ?)"
+        )
+        parameters = (status, DETECTOR_VERSION)
     rows = db.execute(
         """
         SELECT id, created_at, category, confidence, source_kind, source_line
-        FROM events WHERE status = ? ORDER BY id DESC
-        """,
-        (status,),
+        FROM events WHERE status = ?
+        """ + legacy_filter + " ORDER BY id DESC",
+        parameters,
     ).fetchall()
     if not rows:
         print("no events")
@@ -513,7 +521,16 @@ def report_snapshot(db: sqlite3.Connection) -> dict:
     assistant_turns = db.execute(
         "SELECT COALESCE(SUM(assistant_turns), 0) FROM source_stats"
     ).fetchone()[0]
-    rows = db.execute("SELECT status, category, COUNT(*) FROM events GROUP BY status, category").fetchall()
+    rows = db.execute(
+        """
+        SELECT status, category, COUNT(*) FROM events
+        WHERE status != 'candidate'
+           OR source_kind NOT IN ('codex', 'hook')
+           OR detector_version >= ?
+        GROUP BY status, category
+        """,
+        (DETECTOR_VERSION,),
+    ).fetchall()
     counts = Counter({(status, category): count for status, category, count in rows})
     candidates = sum(count for (status, _), count in counts.items() if status == "candidate")
     confirmed = sum(count for (status, _), count in counts.items() if status == "confirmed")
@@ -616,7 +633,7 @@ def doctor(db: sqlite3.Connection, db_path: Path) -> int:
     print("raw_prompt_storage=no")
     print("content_fingerprint_storage=no")
     print("network_calls=no")
-    print("hook_trust=review with /hooks after install or update")
+    print("hook_trust=review in Codex CLI with /hooks after install or update")
     return 0
 
 
@@ -632,12 +649,19 @@ def parser() -> argparse.ArgumentParser:
     record_command.add_argument("--category", required=True, choices=sorted(CATEGORIES))
     record_command.add_argument("--rule")
 
-    mark_command = commands.add_parser("mark", help=argparse.SUPPRESS)
+    mark_command = commands.add_parser(
+        "mark", help="mark an anonymous interaction as a correction"
+    )
     mark_command.add_argument("event_key")
     mark_command.add_argument("--category", required=True, choices=sorted(CATEGORIES))
 
     list_command = commands.add_parser("list", help="list metadata-only events")
     list_command.add_argument("--status", choices=("candidate", "confirmed", "dismissed"), default="candidate")
+    list_command.add_argument(
+        "--include-legacy",
+        action="store_true",
+        help="include unreviewed candidates from the retired phrase detector",
+    )
 
     show_command = commands.add_parser("show", help="read a candidate preview from its original local log")
     show_command.add_argument("id", type=int)
@@ -653,7 +677,7 @@ def parser() -> argparse.ArgumentParser:
     report_command.add_argument("--json", action="store_true", help="emit aggregate JSON only")
     commands.add_parser("rules", help="print user-approved local rules")
     commands.add_parser("doctor", help="check the local privacy and storage setup")
-    commands.add_parser("hook", help=argparse.SUPPRESS)
+    commands.add_parser("hook", help="process a Codex hook payload")
     return root
 
 
@@ -668,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "mark":
             return mark_interaction(db, args.event_key, args.category)
         if args.command == "list":
-            return list_events(db, args.status)
+            return list_events(db, args.status, args.include_legacy)
         if args.command == "show":
             return show_event(db, args.id)
         if args.command == "confirm":

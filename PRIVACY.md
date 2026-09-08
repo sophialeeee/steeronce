@@ -26,6 +26,8 @@ The `UserPromptSubmit` hook returns only an opaque event key as hidden turn cont
 
 `show <id>` is the explicit exception to zero-content processing for legacy candidates: it reads up to 2,000 characters directly from the original local Codex transcript for review. The preview is printed to the terminal and is not saved by SteerOnce. New semantic candidates have no source path or preview.
 
+Unreviewed candidates created by the retired phrase detector remain recoverable in SQLite but are excluded from default lists and metrics. `list --include-legacy` exposes them explicitly.
+
 ## What this does not protect against
 
 SteerOnce does not change what the active Codex model can see; it already receives the user's current message. It does not protect data from an attacker who can already read your Codex transcripts, terminal output, or user account. Legacy local transcript paths can themselves reveal usernames or project names. Delete the SQLite database to remove SteerOnce's retained metadata; this does not delete the original Codex transcripts.
