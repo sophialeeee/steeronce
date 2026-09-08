@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name="steeronce",
-    version="0.2.1",
+    version="0.2.2",
     description="Turn approved Codex corrections into private reusable rules",
     url="https://github.com/sophialeeee/steeronce",
     license="MIT",

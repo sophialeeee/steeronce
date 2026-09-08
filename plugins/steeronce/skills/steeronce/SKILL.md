@@ -1,6 +1,6 @@
 ---
 name: steeronce
-description: Turn explicit user corrections during AI-assisted work into local, user-approved SteerOnce rules without storing prompt text. Use when the user says the agent misunderstood intent, guessed without evidence, ignored supplied context, exceeded authorization, skipped verification, or produced a broken implementation.
+description: Turn explicit user corrections during AI-assisted work into local, user-approved SteerOnce rules without storing prompt text. Use when the user says the agent misunderstood intent, guessed without evidence, ignored supplied context, exceeded authorization, skipped verification, or produced a broken implementation. Also use when the user asks to review, confirm, dismiss, report, or list SteerOnce corrections and rules.
 ---
 
 # SteerOnce
@@ -20,6 +20,18 @@ To inspect already approved personal rules, run the bundled script from this ski
 ```bash
 python3 <this-skill-directory>/scripts/steeronce.py rules
 ```
+
+For explicit review or reporting requests, use the matching local command:
+
+```bash
+python3 <this-skill-directory>/scripts/steeronce.py list
+python3 <this-skill-directory>/scripts/steeronce.py show <candidate-id>
+python3 <this-skill-directory>/scripts/steeronce.py confirm <candidate-id> --rule "<abstract-rule>"
+python3 <this-skill-directory>/scripts/steeronce.py dismiss <candidate-id>
+python3 <this-skill-directory>/scripts/steeronce.py report
+```
+
+Treat `confirm` and `dismiss` as user-authorized mutations: run them only when the user explicitly approves the candidate and rule or explicitly rejects the candidate. Reports and lists must not expose prompt text.
 
 If the hook is unavailable and the user explicitly asks to save a confirmed correction, run:
 
